@@ -3,7 +3,7 @@ name: Deploy branch to cPanel folder
 on:
   push:
     branches:
-      - release   # 👈 change if needed
+      - main   # 👈 change if needed
 
 jobs:
   deploy:

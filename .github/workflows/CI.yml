@@ -23,14 +23,14 @@ jobs:
           PASS: ${{ secrets.CPANEL_FTP_PASS }}
           REMOTE_DIR: ${{ secrets.CPANEL_REMOTE_DIR }}
         run: |
-          lftp -u "$USER","$PASS" ftp://$HOST <<EOF
-          set ftp:passive-mode on
-          set ftp:ssl-allow no
-          set net:timeout 20
+          lftp -u "$USER","$PASS" sftp://$HOST <<EOF
+          set sftp:auto-confirm yes
           set net:max-retries 2
+          set net:timeout 20
           set net:reconnect-interval-base 5
-          set dns:order "inet"
-          mirror --reverse --delete --verbose \
+          set mirror:parallel-transfer-count 1
+      
+          mirror --reverse --verbose \
             --exclude-glob .git/* \
             --exclude-glob .github/* \
             --exclude-glob node_modules/* \
@@ -39,5 +39,6 @@ jobs:
             --exclude-glob Dockerfile \
             --exclude-glob *.log \
             ./ $REMOTE_DIR
+      
           quit
           EOF

@@ -17,7 +17,7 @@ jobs:
         run: sudo apt-get install -y lftp
       - name: Test SFTP login
         run: |
-          lftp -u "${{ secrets.CPANEL_FTP_USER }}","${{ secrets.CPANEL_FTP_PASS }}" ftp://${{ secrets.CPANEL_FTP_HOST }} -e "ls; quit"
+          lftp -u "${{ secrets.CPANEL_FTP_USER }}","${{ secrets.CPANEL_FTP_PASS }}" sftp://${{ secrets.CPANEL_FTP_HOST }} -e "ls; quit"
 
       - name: FTP Sync to cPanel
         env:

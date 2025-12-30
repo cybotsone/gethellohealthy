@@ -1,1 +1,41 @@
+name: Deploy branch to cPanel folder
+
+on:
+  push:
+    branches:
+      - release   # 👈 change if needed
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install lftp
+        run: sudo apt-get install -y lftp
+
+      - name: Sync branch to cPanel folder
+        env:
+          HOST: ${{ secrets.CPANEL_HOST }}
+          USER: ${{ secrets.CPANEL_USER }}
+          PASS: ${{ secrets.CPANEL_PASSWORD }}
+          REMOTE_DIR: ${{ secrets.CPANEL_REMOTE_DIR }}
+        run: |
+          lftp -u "$USER","$PASS" sftp://$HOST <<EOF
+          set sftp:auto-confirm yes
+          mirror --reverse --delete --verbose \
+            --exclude-glob .git/* \
+            --exclude-glob .github/* \
+            --exclude-glob node_modules/* \
+            --exclude-glob vendor/* \
+            --exclude-glob .env \
+            --exclude-glob Dockerfile \
+            --exclude-glob *.log \
+            ./ $REMOTE_DIR
+          quit
+          EOF
 

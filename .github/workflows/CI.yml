@@ -1,32 +1,32 @@
-name: Deploy branch to cPanel folder
+name: Sync GitHub to cPanel (FTP)
 
 on:
   push:
     branches:
-      - main   # 👈 change if needed
+      - main   # only this branch deploys
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout branch
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
       - name: Install lftp
         run: sudo apt-get install -y lftp
 
-      - name: Sync branch to cPanel folder
+      - name: FTP Sync to cPanel
         env:
-          HOST: ${{ secrets.CPANEL_HOST }}
-          USER: ${{ secrets.CPANEL_USER }}
-          PASS: ${{ secrets.CPANEL_PASSWORD }}
+          HOST: ${{ secrets.CPANEL_FTP_HOST }}
+          USER: ${{ secrets.CPANEL_FTP_USER }}
+          PASS: ${{ secrets.CPANEL_FTP_PASS }}
           REMOTE_DIR: ${{ secrets.CPANEL_REMOTE_DIR }}
         run: |
-          lftp -u "$USER","$PASS" sftp://$HOST <<EOF
-          set sftp:auto-confirm yes
+          lftp -u "$USER","$PASS" ftp://$HOST <<EOF
+          set ftp:ssl-allow no
+          set ftp:passive-mode on
+          set ftp:list-options -a
           mirror --reverse --delete --verbose \
             --exclude-glob .git/* \
             --exclude-glob .github/* \
@@ -38,4 +38,3 @@ jobs:
             ./ $REMOTE_DIR
           quit
           EOF
-

@@ -3,7 +3,7 @@ name: Sync GitHub to cPanel (FTP)
 on:
   push:
     branches:
-      - main   # only this branch deploys
+      - release   # only this branch deploys
 
 jobs:
   deploy:
@@ -12,16 +12,53 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install lftp
         run: sudo apt-get install -y lftp
-      - name: Deploy changes (safe overwrite)
+          
+      - name: Deploy changes (full repo) + delete removed files
         env:
           HOST: ${{ secrets.CPANEL_FTP_HOST }}
           USER: ${{ secrets.CPANEL_FTP_USER }}
           PASS: ${{ secrets.CPANEL_FTP_PASS }}
           REMOTE_DIR: ${{ secrets.CPANEL_REMOTE_DIR }}
         run: |
+          set -e
+
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+
+          echo "Diffing: $BEFORE -> $AFTER"
+
+          # If BEFORE isn't present, fall back to previous commit
+          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "BEFORE commit not found locally. Falling back to AFTER^"
+            BEFORE="$(git rev-parse "$AFTER^")"
+            echo "Fallback Diffing: $BEFORE -> $AFTER"
+          fi
+
+          UPLOAD_LIST=$(git diff --name-only --diff-filter=AMR "$BEFORE" "$AFTER" || true)
+          DELETE_LIST=$(git diff --name-only --diff-filter=D   "$BEFORE" "$AFTER" || true)
+
+          # Apply the same excludes you had (path-based filtering)
+          filter_excludes() {
+            grep -vE '^(\.git/|\.github/|node_modules/|vendor/)' \
+            | grep -vE '^\.env$' \
+            | grep -vE '^Dockerfile$' \
+            | grep -vE '\.log$' \
+            || true
+          }
+
+          UPLOAD_LIST=$(echo "$UPLOAD_LIST" | filter_excludes)
+          DELETE_LIST=$(echo "$DELETE_LIST" | filter_excludes)
+
+          echo "To upload:"
+          echo "$UPLOAD_LIST" || true
+          echo "To delete:"
+          echo "$DELETE_LIST" || true
+
           lftp -u "$USER","$PASS" ftp://$HOST <<EOF
           set ftp:ssl-allow yes
           set ftp:ssl-force no
@@ -30,20 +67,24 @@ jobs:
           set ftp:passive-mode yes
           set net:max-retries 2
           set net:timeout 20
+          set net:reconnect-interval-base 5
 
-          mirror \
-            --reverse \
-            --verbose \
-            --delete \
-            --ignore-time \
-            --no-perms \
-            --exclude-glob .git/ \
-            --exclude-glob .github/ \
-            --exclude-glob node_modules/ \
-            --exclude-glob vendor/ \
-            --exclude-glob .env \
-            --exclude-glob Dockerfile \
-            ./ "$REMOTE_DIR"
+          # Upload changed files
+          $(if [ -n "$UPLOAD_LIST" ]; then
+              while IFS= read -r f; do
+                [ -z "$f" ] && continue
+                rdir="$REMOTE_DIR/$(dirname "$f")"
+                echo "mkdir -p \"$rdir\"; put -O \"$rdir\" \"$f\";"
+              done <<< "$UPLOAD_LIST"
+            fi)
+
+          # Delete removed files on remote
+          $(if [ -n "$DELETE_LIST" ]; then
+              while IFS= read -r f; do
+                [ -z "$f" ] && continue
+                echo "rm -f \"$REMOTE_DIR/$f\";"
+              done <<< "$DELETE_LIST"
+            fi)
 
           quit
           EOF

@@ -3,7 +3,7 @@ name: Sync GitHub to cPanel (FTP)
 on:
   push:
     branches:
-      - release   # only this branch deploys
+      - main   # only this branch deploys
 
 jobs:
   deploy:

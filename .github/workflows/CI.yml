@@ -44,14 +44,14 @@ jobs:
           git diff --name-status -M "$BEFORE" "$AFTER" | while read -r status src dst; do
             case "$status" in
               R*)
-                echo "rm -rf \"$src\"" >> "$FTP_CMDS"
+                echo "rm \"$src\"" >> "$FTP_CMDS"
                 echo "put \"$dst\"" >> "$FTP_CMDS"
                 ;;
               A|M)
                 echo "put \"$src\"" >> "$FTP_CMDS"
                 ;;
               D)
-                echo "rm -rf \"$src\"" >> "$FTP_CMDS"
+                echo "rm \"$src\"" >> "$FTP_CMDS"
                 ;;
             esac
           done

@@ -75,10 +75,7 @@ jobs:
           set cmd:fail-exit yes
           set cmd:verbose yes
 
-          mirror --reverse --verbose \
-            --delete \
-          ./ $REMOTE_DIR
-
+          cd "$REMOTE_DIR"
           $(cat "$FTP_CMDS")
 
           quit

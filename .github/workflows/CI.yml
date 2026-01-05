@@ -51,13 +51,26 @@ jobs:
             || true
           }
 
-          UPLOAD_LIST=$(echo "$UPLOAD_LIST" | filter_excludes)
-          DELETE_LIST=$(echo "$DELETE_LIST" | filter_excludes)
-
-          echo "To upload:"
-          echo "$UPLOAD_LIST" || true
-          echo "To delete:"
-          echo "$DELETE_LIST" || true
+          # Added, modified, deleted
+          ADDED=$(git diff --name-only --diff-filter=A "$BEFORE" "$AFTER" || true)
+          MODIFIED=$(git diff --name-only --diff-filter=M "$BEFORE" "$AFTER" || true)
+          DELETED=$(git diff --name-only --diff-filter=D "$BEFORE" "$AFTER" || true)
+          
+          UPLOAD_LIST=$(printf "%s\n%s\n" "$ADDED" "$MODIFIED" | sort -u)
+          DELETE_LIST="$DELETED"
+          
+          # Auto-detect renames (D + A in same directory)
+          RENAMES=""
+          for d in $DELETED; do
+            ddir=$(dirname "$d")
+            for a in $ADDED; do
+              if [ "$(dirname "$a")" = "$ddir" ]; then
+                RENAMES="$RENAMES $d|$a"
+                DELETE_LIST=$(echo "$DELETE_LIST" | grep -v "^$d$")
+                UPLOAD_LIST=$(echo "$UPLOAD_LIST" | grep -v "^$a$")
+              fi
+            done
+          done
 
           lftp -u "$USER","$PASS" ftp://$HOST <<EOF
           set ftp:ssl-allow yes
@@ -67,33 +80,30 @@ jobs:
           set ftp:passive-mode yes
           set net:max-retries 2
           set net:timeout 20
-          
-          # IMPORTANT: allow mkdir/rm to fail without killing session
           set cmd:fail-exit no
+          set cmd:verbose no
           
-          # --- Handle RENAMES ---
+          cd "$REMOTE_DIR"
+          
+          # --- Handle renames ---
           $(if [ -n "$RENAMES" ]; then
               while IFS="|" read -r old new; do
-                rdir="$REMOTE_DIR/$(dirname "$new")"
-                echo "mkdir \"$rdir\";"
-                echo "rm -f \"$REMOTE_DIR/$old\";"
-                echo "put -O \"$rdir\" \"$new\";"
+                echo "rm -f \"$old\";"
+                echo "put \"$new\";"
               done <<< "$RENAMES"
             fi)
           
-          # --- Upload added / modified files ---
+          # --- Upload new / modified ---
           $(if [ -n "$UPLOAD_LIST" ]; then
               while IFS= read -r f; do
-                rdir="$REMOTE_DIR/$(dirname "$f")"
-                echo "mkdir \"$rdir\";"
-                echo "put -O \"$rdir\" \"$f\";"
+                echo "put \"$f\";"
               done <<< "$UPLOAD_LIST"
             fi)
           
-          # --- Delete removed files ---
+          # --- Delete removed ---
           $(if [ -n "$DELETE_LIST" ]; then
               while IFS= read -r f; do
-                echo "rm -f \"$REMOTE_DIR/$f\";"
+                echo "rm -f \"$f\";"
               done <<< "$DELETE_LIST"
             fi)
           

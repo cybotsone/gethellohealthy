@@ -1,4 +1,4 @@
-name: Sync GitHub to cPanel (FTP)
+name: Sync GitHub to cPanel (FTP – Delta Deploy)
 
 on:
   push:
@@ -16,9 +16,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install lftp
-        run: sudo apt-get install -y lftp
-          
-      - name: Deploy changes (full repo) + delete removed files
+        run: sudo apt-get update && sudo apt-get install -y lftp
+
+      - name: Deploy changed files only (add / modify / delete / rename)
         env:
           HOST: ${{ secrets.CPANEL_FTP_HOST }}
           USER: ${{ secrets.CPANEL_FTP_USER }}
@@ -30,47 +30,39 @@ jobs:
           BEFORE="${{ github.event.before }}"
           AFTER="${{ github.sha }}"
 
-          echo "Diffing: $BEFORE -> $AFTER"
+          echo "Deploying diff: $BEFORE → $AFTER"
 
-          # If BEFORE isn't present, fall back to previous commit
+          # Fallback if BEFORE commit not available
           if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            echo "BEFORE commit not found locally. Falling back to AFTER^"
+            echo "BEFORE commit not found, using previous commit"
             BEFORE="$(git rev-parse "$AFTER^")"
-            echo "Fallback Diffing: $BEFORE -> $AFTER"
           fi
 
-          UPLOAD_LIST=$(git diff --name-only --diff-filter=AMR "$BEFORE" "$AFTER" || true)
-          DELETE_LIST=$(git diff --name-only --diff-filter=D   "$BEFORE" "$AFTER" || true)
+          # Build FTP command list using Git rename detection
+          FTP_CMDS=$(mktemp)
 
-          # Apply the same excludes you had (path-based filtering)
-          filter_excludes() {
-            grep -vE '^(\.git/|\.github/|node_modules/|vendor/)' \
-            | grep -vE '^\.env$' \
-            | grep -vE '^Dockerfile$' \
-            | grep -vE '\.log$' \
-            || true
-          }
-
-          # Added, modified, deleted
-          ADDED=$(git diff --name-only --diff-filter=A "$BEFORE" "$AFTER" || true)
-          MODIFIED=$(git diff --name-only --diff-filter=M "$BEFORE" "$AFTER" || true)
-          DELETED=$(git diff --name-only --diff-filter=D "$BEFORE" "$AFTER" || true)
-          
-          UPLOAD_LIST=$(printf "%s\n%s\n" "$ADDED" "$MODIFIED" | sort -u)
-          DELETE_LIST="$DELETED"
-          
-          # Auto-detect renames (D + A in same directory)
-          RENAMES=""
-          for d in $DELETED; do
-            ddir=$(dirname "$d")
-            for a in $ADDED; do
-              if [ "$(dirname "$a")" = "$ddir" ]; then
-                RENAMES="$RENAMES $d|$a"
-                DELETE_LIST=$(echo "$DELETE_LIST" | grep -v "^$d$")
-                UPLOAD_LIST=$(echo "$UPLOAD_LIST" | grep -v "^$a$")
-              fi
-            done
+          git diff --name-status -M "$BEFORE" "$AFTER" | while read -r status src dst; do
+            case "$status" in
+              R*)
+                echo "rm -f \"$src\"" >> "$FTP_CMDS"
+                echo "put \"$dst\"" >> "$FTP_CMDS"
+                ;;
+              A|M)
+                echo "put \"$src\"" >> "$FTP_CMDS"
+                ;;
+              D)
+                echo "rm -f \"$src\"" >> "$FTP_CMDS"
+                ;;
+            esac
           done
+
+          echo "FTP actions:"
+          cat "$FTP_CMDS" || true
+
+          if [ ! -s "$FTP_CMDS" ]; then
+            echo "No changes to deploy."
+            exit 0
+          fi
 
           lftp -u "$USER","$PASS" ftp://$HOST <<EOF
           set ftp:ssl-allow yes
@@ -80,33 +72,11 @@ jobs:
           set ftp:passive-mode yes
           set net:max-retries 2
           set net:timeout 20
-          set cmd:fail-exit no
+          set cmd:fail-exit yes
           set cmd:verbose no
-          
+
           cd "$REMOTE_DIR"
-          
-          # --- Handle renames ---
-          $(if [ -n "$RENAMES" ]; then
-              while IFS="|" read -r old new; do
-                echo "rm -f \"$old\";"
-                echo "put \"$new\";"
-              done <<< "$RENAMES"
-            fi)
-          
-          # --- Upload new / modified ---
-          $(if [ -n "$UPLOAD_LIST" ]; then
-              while IFS= read -r f; do
-                echo "put \"$f\";"
-              done <<< "$UPLOAD_LIST"
-            fi)
-          
-          # --- Delete removed ---
-          $(if [ -n "$DELETE_LIST" ]; then
-              while IFS= read -r f; do
-                echo "rm -f \"$f\";"
-              done <<< "$DELETE_LIST"
-            fi)
-          
+          $(cat "$FTP_CMDS")
+
           quit
           EOF
-

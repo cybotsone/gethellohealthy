@@ -67,24 +67,36 @@ jobs:
           set ftp:passive-mode yes
           set net:max-retries 2
           set net:timeout 20
-          set net:reconnect-interval-base 5
-
-          # Upload changed files
+          
+          # IMPORTANT: allow mkdir/rm to fail without killing session
+          set cmd:fail-exit no
+          
+          # --- Handle RENAMES ---
+          $(if [ -n "$RENAMES" ]; then
+              while IFS="|" read -r old new; do
+                rdir="$REMOTE_DIR/$(dirname "$new")"
+                echo "mkdir \"$rdir\";"
+                echo "rm -f \"$REMOTE_DIR/$old\";"
+                echo "put -O \"$rdir\" \"$new\";"
+              done <<< "$RENAMES"
+            fi)
+          
+          # --- Upload added / modified files ---
           $(if [ -n "$UPLOAD_LIST" ]; then
               while IFS= read -r f; do
-                [ -z "$f" ] && continue
                 rdir="$REMOTE_DIR/$(dirname "$f")"
-                echo "mkdir -p \"$rdir\"; put -O \"$rdir\" \"$f\";"
+                echo "mkdir \"$rdir\";"
+                echo "put -O \"$rdir\" \"$f\";"
               done <<< "$UPLOAD_LIST"
             fi)
-
-          # Delete removed files on remote
+          
+          # --- Delete removed files ---
           $(if [ -n "$DELETE_LIST" ]; then
               while IFS= read -r f; do
-                [ -z "$f" ] && continue
                 echo "rm -f \"$REMOTE_DIR/$f\";"
               done <<< "$DELETE_LIST"
             fi)
-
+          
           quit
           EOF
+

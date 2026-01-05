@@ -1,4 +1,4 @@
-name: Sync GitHub to cPanel (FTP – Delta Deploy)
+name: Sync GitHub to cPanel (FTP)
 
 on:
   push:
@@ -12,58 +12,27 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install lftp
-        run: sudo apt-get update && sudo apt-get install -y lftp
+        run: sudo apt-get install -y lftp
 
-      - name: Deploy changed files only (add / modify / delete / rename)
+      - name: Normalize mtimes from git history
+        run: |
+          # Set each tracked file's mtime to its last commit timestamp
+          git ls-files -z | while IFS= read -r -d '' f; do
+            ts=$(git log -1 --format=%ct -- "$f" || true)
+            if [ -n "$ts" ]; then
+              touch -d "@$ts" "$f"
+            fi
+          done
+          
+      - name: FTP Mirror (full repo) to cPanel + delete removed files
         env:
           HOST: ${{ secrets.CPANEL_FTP_HOST }}
           USER: ${{ secrets.CPANEL_FTP_USER }}
           PASS: ${{ secrets.CPANEL_FTP_PASS }}
           REMOTE_DIR: ${{ secrets.CPANEL_REMOTE_DIR }}
         run: |
-          set -e
-
-          BEFORE="${{ github.event.before }}"
-          AFTER="${{ github.sha }}"
-
-          echo "Deploying diff: $BEFORE → $AFTER"
-
-          # Fallback if BEFORE commit not available
-          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            echo "BEFORE commit not found, using previous commit"
-            BEFORE="$(git rev-parse "$AFTER^")"
-          fi
-
-          # Build FTP command list using Git rename detection
-          FTP_CMDS=$(mktemp)
-
-          git diff --name-status -M "$BEFORE" "$AFTER" | while read -r status src dst; do
-            case "$status" in
-              R*)
-                echo "rm -rf \"$src\"" >> "$FTP_CMDS"
-                echo "put \"$dst\"" >> "$FTP_CMDS"
-                ;;
-              A|M)
-                echo "put \"$src\"" >> "$FTP_CMDS"
-                ;;
-              D)
-                echo "rm -rf \"$src\"" >> "$FTP_CMDS"
-                ;;
-            esac
-          done
-
-          echo "FTP actions:"
-          cat "$FTP_CMDS" || true
-
-          if [ ! -s "$FTP_CMDS" ]; then
-            echo "No changes to deploy."
-            exit 0
-          fi
-
           lftp -u "$USER","$PASS" ftp://$HOST <<EOF
           set ftp:ssl-allow yes
           set ftp:ssl-force no
@@ -72,11 +41,19 @@ jobs:
           set ftp:passive-mode yes
           set net:max-retries 2
           set net:timeout 20
-          set cmd:fail-exit yes
-          set cmd:verbose no
+          set net:reconnect-interval-base 5
 
-          cd "$REMOTE_DIR"
-          $(cat "$FTP_CMDS")
-
+          mirror --reverse --verbose \
+            --delete \
+            --no-perms \
+            --no-umask \
+            --exclude-glob .git/* \
+            --exclude-glob .github/* \
+            --exclude-glob node_modules/* \
+            --exclude-glob vendor/* \
+            --exclude-glob .env \
+            --exclude-glob Dockerfile \
+            --exclude-glob *.log \
+            ./ $REMOTE_DIR
           quit
           EOF

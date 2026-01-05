@@ -3,7 +3,7 @@ name: Sync GitHub to cPanel (FTP – Delta Deploy)
 on:
   push:
     branches:
-      - main   # only this branch deploys
+      - main
 
 jobs:
   deploy:
@@ -13,7 +13,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # REQUIRED for git diff
+          fetch-depth: 0
 
       - name: Install lftp
         run: sudo apt-get update && sudo apt-get install -y lftp
@@ -30,17 +30,12 @@ jobs:
           BEFORE="${{ github.event.before }}"
           AFTER="${{ github.sha }}"
 
-          echo "Deploying changes: $BEFORE → $AFTER"
-
-          # Handle first push / force push
           if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             BEFORE="$(git rev-parse "$AFTER^")"
-            echo "Fallback BEFORE=$BEFORE"
           fi
 
           FTP_CMDS=$(mktemp)
 
-          # Use git's native rename detection
           git diff --name-status -M "$BEFORE" "$AFTER" | while read -r status src dst; do
             case "$status" in
               R*)
@@ -55,9 +50,6 @@ jobs:
                 ;;
             esac
           done
-
-          echo "FTP actions:"
-          cat "$FTP_CMDS" || true
 
           if [ ! -s "$FTP_CMDS" ]; then
             echo "No changes to deploy."
@@ -76,6 +68,9 @@ jobs:
           set cmd:verbose yes
 
           cd "$REMOTE_DIR"
+          pwd
+          ls
+
           $(cat "$FTP_CMDS")
 
           quit
